@@ -1,12 +1,28 @@
 #include <QTRSensors.h>
 #include <AFMotor.h>
 #include <SoftwareSerial.h>
-SoftwareSerial mySerial(52, 53); // RX, TX
+#include <Wire.h>
+#include <Adafruit_TCS34725softi2c.h>
 
-//constants definitions
+//Bluetooth
+SoftwareSerial mySerial(50, 51);  // RX, TX
+
+//Sensores RGB
+const int sdaEsq = 20, sclEsq = 21, sdaDir = 53, sclDir = 52;
+Adafruit_TCS34725softi2c rgbDir = Adafruit_TCS34725softi2c(TCS34725_INTEGRATIONTIME_50MS, TCS34725_GAIN_4X, sdaDir, sclDir);
+Adafruit_TCS34725softi2c rgbEsq = Adafruit_TCS34725softi2c(TCS34725_INTEGRATIONTIME_50MS, TCS34725_GAIN_4X, sdaEsq, sclEsq);
+
+//Led RGB
+const int redPin = A13, greenPin = A9, bluePin = A8;
+
+//Buzzer
+const int buzzerPin = 37;
+
+//Motores
 AF_DCMotor MEsq(4);
 AF_DCMotor MDir(3);
 
+//Sensor Segue Linha
 QTRSensors qtr;
 const uint8_t SensorCount = 8;
 uint16_t sensorValues[SensorCount];
@@ -59,6 +75,16 @@ void setup() {
   qtr.setSensorPins((const uint8_t[]){ 31, 28, 29, 26, 27, 24, 25, 22 }, SensorCount);
   qtr.setEmitterPin(23);
 
+  while (!rgbDir.begin()) {
+    Serial.println("O sensor RGB direito não foi encontrado ... verifica as ligações");
+    delay(1000);
+  }
+
+  while (!rgbEsq.begin()) {
+    Serial.println("O sensor RGB esquerdo não foi encontrado ... verifica as ligações");
+    delay(1000);
+  }
+
   delay(500);
   pinMode(LED_BUILTIN, OUTPUT);
   calibration();
@@ -90,7 +116,8 @@ void calibration() {
 
 void loop() {
   if (mySerial.available()) {
-    while (mySerial.available() == 0);
+    while (mySerial.available() == 0)
+      ;
     valuesread();
     processing();
   }
@@ -176,6 +203,7 @@ void moveStop() {  // -> para o carro andar para a frente
 
 void robot_control() {
 
+  checkColor();
   uint16_t position = qtr.readLineBlack(sensorValues);
   int error = 3500 - position;
 
@@ -235,7 +263,7 @@ void robot_control() {
 }
 
 void PID(int error) {
-  
+
   int P = error;
   int I = I + error;
   int D = error - lastError;
@@ -261,7 +289,9 @@ void PID(int error) {
   if (motorspeedb < minspeedb) {
     motorspeedb = minspeedb;
   }
-  Serial.print(motorspeeda); Serial.print(" "); Serial.println(motorspeedb);
+  Serial.print(motorspeeda);
+  Serial.print(" ");
+  Serial.println(motorspeedb);
   speedcontrol(motorspeeda, motorspeedb);
 }
 
@@ -279,4 +309,115 @@ void speedcontrol(int mota, int motb) {
     motb = 0 - motb;
     moveR(mota, motb);
   }
+}
+
+void turnRed() {
+  analogWrite(redPin, 255);
+  analogWrite(greenPin, 0);
+  analogWrite(bluePin, 0);
+}
+
+void turnGreen() {
+  analogWrite(redPin, 0);
+  analogWrite(greenPin, 255);
+  analogWrite(bluePin, 0);
+}
+
+void turnBlue() {
+  analogWrite(redPin, 0);
+  analogWrite(greenPin, 0);
+  analogWrite(bluePin, 255);
+}
+
+void turnPink() {
+  analogWrite(redPin, 255);
+  analogWrite(greenPin, 0);
+  analogWrite(bluePin, 255);
+}
+
+void ledOff() {
+  analogWrite(redPin, 0);
+  analogWrite(greenPin, 0);
+  analogWrite(bluePin, 0);
+}
+
+void checkColor() {
+
+  uint16_t clearDir, redDir, greenDir, blueDir;
+  uint16_t clearEsq, redEsq, greenEsq, blueEsq;
+  rgbDir.setInterrupt(false);  // turn on LED
+  rgbEsq.setInterrupt(false);  // turn on LED
+  delay(60);                   // takes 50ms to read
+  rgbDir.getRawData(&redDir, &greenDir, &blueDir, &clearDir);
+  rgbEsq.getRawData(&redEsq, &greenEsq, &blueEsq, &clearEsq);
+  rgbDir.setInterrupt(true);  // turn off LED
+  rgbEsq.setInterrupt(true);  // turn off LED
+
+  uint32_t sumDir = clearDir;
+  float dirR, dirG, dirB;
+  dirR = redDir;
+  dirR /= sumDir;
+  dirG = greenDir;
+  dirG /= sumDir;
+  dirB = blueDir;
+  dirB /= sumDir;
+  dirR *= 256;
+  dirG *= 256;
+  dirB *= 256;
+
+  uint32_t sumEsq = clearEsq;
+  float esqR, esqG, esqB;
+  esqR = redEsq;
+  esqR /= sumEsq;
+  esqG = greenEsq;
+  esqG /= sumEsq;
+  esqB = blueEsq;
+  esqB /= sumEsq;
+  esqR *= 256;
+  esqG *= 256;
+  esqB *= 256;
+
+  Serial.print("RGB Direito R: ");
+  Serial.print((int)dirR);
+  Serial.print(" G: ");
+  Serial.print((int)dirG);
+  Serial.print(" B: ");
+  Serial.print((int)dirB);
+  Serial.print("\t");
+
+  Serial.print("RGB Esquerdo R: ");
+  Serial.print((int)esqR);
+  Serial.print(" G: ");
+  Serial.print((int)esqG);
+  Serial.print(" B: ");
+  Serial.println((int)esqB);
+
+
+  if ((dirR > 120 && dirG < 100 && dirB < 100) || (esqR > 120 && esqG < 100 && esqB < 100)) {
+    analogWrite(redPin, 255);
+    analogWrite(greenPin, 0);
+    analogWrite(bluePin, 0);
+    buzzerOn();
+
+  } else if ((dirR < 100 && dirG > 110 && dirB < 100) || (esqR < 100 && esqG > 110 && esqB < 100)) {
+    analogWrite(redPin, 0);
+    analogWrite(greenPin, 255);
+    analogWrite(bluePin, 0);
+    buzzerOn();
+  } else if ((dirR < 100 && dirG < 100 && dirB > 130) || (esqR < 100 && esqG < 100 && esqB > 130)) {
+    analogWrite(redPin, 0);
+    analogWrite(greenPin, 0);
+    analogWrite(bluePin, 255);
+    buzzerOn();
+  } else {
+    ledOff();
+  }
+}
+
+void buzzerOn() {
+  moveStop();
+  digitalWrite(buzzerPin, HIGH);  //Set PIN 8 feet as HIGH = 5 v
+  delay(3000);
+  digitalWrite(buzzerPin, LOW);
+  ledOff();
 }
